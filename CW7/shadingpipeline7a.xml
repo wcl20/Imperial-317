@@ -1,0 +1,492 @@
+<?xml version="1.0" encoding="ISO-8859-1"?>
+<pipeline>
+<vertex>
+<![CDATA[#version 400
+
+uniform mat4 mvMatrix;
+uniform mat4 pMatrix;
+uniform mat3 normalMatrix; //mv matrix without translation
+
+uniform vec4 lightPosition_camSpace; //light Position in camera space
+
+in vec4 vertex_worldSpace;
+in vec3 normal_worldSpace;
+in vec2 textureCoordinate_input;
+
+out data
+{
+	vec4 position_camSpace;
+	vec3 normal_camSpace;
+	vec2 textureCoordinate;
+	vec4 color;
+}vertexIn;
+
+//Vertex shader compute the vectors per vertex
+void main(void)
+{
+    //Put the vertex in the correct coordinate system by applying the model view matrix
+    vec4 vertex_camSpace = mvMatrix*vertex_worldSpace;
+	vertexIn.position_camSpace = vertex_camSpace;
+	
+    //Apply the model-view transformation to the normal (only rotation, no translation)
+    //Normals put in the camera space
+    vertexIn.normal_camSpace = normalize(normalMatrix*normal_worldSpace);
+
+	//Color chosen as red
+	vertexIn.color = vec4(1.0,0.0,0.0,1.0);
+    
+    //Texture coordinate
+    vertexIn.textureCoordinate = textureCoordinate_input;
+	
+    gl_Position = pMatrix * vertex_camSpace;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+]]></vertex>
+<geom>
+<![CDATA[#version 400
+
+layout(triangles) in;
+layout(triangle_strip, max_vertices = 3) out;
+
+uniform mat4 mvMatrix;
+uniform mat4 pMatrix;
+uniform mat3 normalMatrix; //mv matrix without translation
+
+uniform vec4 lightPosition_camSpace; //light Position in camera space
+
+
+in data
+{
+	vec4 position_camSpace;
+	vec3 normal_camSpace;
+	vec2 textureCoordinate;
+	vec4 color;
+}vertexIn[3];
+
+out fragmentData
+{
+	vec4 position_camSpace;
+	vec3 normal_camSpace;
+	vec2 textureCoordinate;
+	vec4 color;
+} frag;
+
+
+void main() {
+  for(int i = 0; i < 3; i++) { // You used triangles, so it's always 3
+    gl_Position = gl_in[i].gl_Position;
+	frag.position_camSpace = vertexIn[i].position_camSpace;
+	frag.normal_camSpace = vertexIn[i].normal_camSpace;
+	frag.textureCoordinate = vertexIn[i].textureCoordinate;
+	frag.color = vertexIn[i].color;
+    EmitVertex();
+  }
+  EndPrimitive();
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+]]></geom>
+<frag>
+<![CDATA[#version 400
+
+uniform vec4 ambient;
+uniform vec4 diffuse;
+uniform vec4 specular;
+uniform float shininess;
+
+uniform vec4 lightPosition_camSpace; //light Position in camera space
+
+in fragmentData
+{
+	vec4 position_camSpace;
+	vec3 normal_camSpace;
+	vec2 textureCoordinate;
+	vec4 color;
+} frag;
+
+
+out vec4 fragColor;
+
+//Fragment shader computes the final color
+void main(void)
+{
+	//Not used in that task
+    fragColor =  frag.color;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+]]></frag>
+<R2TVert>
+<![CDATA[#version 400
+#extension GL_ARB_separate_shader_objects : enable
+
+uniform mat4 mMatrix;
+uniform mat4 mvMatrix;
+
+in vec4 vertex_worldSpace;
+in vec3 normal_worldSpace;
+
+out vec3 dir; 
+
+void  main () 
+{ 
+	vec4 vertex_modelSpace = mMatrix*vertex_worldSpace;
+	
+    dir = normalize ( vec3 ( vertex_modelSpace.x * 1.6,  vertex_modelSpace.y , -1.0 )); 
+	
+    gl_Position  = vertex_modelSpace; 
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+]]></R2TVert>
+<R2TFrag>
+<![CDATA[#version 400
+
+#define MAX_INT 2147483647
+#define PI 3.141592653589793
+#define EPSILON 0.001
+
+in vec3 dir; 
+out vec4 outcolour;
+
+uniform mat4 mMatrix;
+uniform mat4 mvMatrix;
+uniform mat4 mvMatrixScene;
+uniform mat4 pMatrix;
+uniform mat3 normalMatrix; //mv matrix without translation
+
+// Scene setting
+const int raytraceDepth = 42;
+const int numSpheres = 6;
+const int light_intensity = 300;
+const vec3 light_point = vec3(6,4,3); 
+const float checker_size = 0.4;
+
+
+
+//example data structures
+struct Ray
+{
+	vec3 origin;
+	vec3 dir;
+};
+struct Sphere
+{
+	vec3 centre;
+	float radius;
+	vec3 colour;
+};
+struct Plane
+{
+	vec3 point;
+	vec3 normal;
+	vec3 colour;
+};
+
+struct Intersection
+{
+    float t; //closest hit
+    vec3 point;	// hit point
+    vec3 normal;	// normal
+    int hit;	//did it hit?
+    vec3 colour; // colour accumulation, can be also implemented in struct Ray
+};
+
+vec3 phong_illumination(vec3 hit_point, vec3 normal, vec3 colour) 
+{
+	// Phong Illumination -- diffuse
+	vec3 light_vector = normalize(light_point);
+	vec3 diffuse_component = max(dot(light_vector, normal), 0.0) * colour;
+	// Phong Illumination -- specular
+	vec3 reflect_vector = normalize(reflect(-light_vector, normal));			
+	vec3 view_vector = -normalize(hit_point);
+	vec3 specular_component = pow(max(dot(reflect_vector, view_vector), 0.0), 50) * colour;	
+	// Phong Illumination -- weight	
+	float d = distance(hit_point, light_point);	
+	float weight = light_intensity / (4 * PI * (d + 0.5));
+	
+	return (diffuse_component + specular_component) * weight;
+} 
+
+void shpere_intersect(Sphere sph, Ray ray, inout Intersection intersect)
+{	
+	// Ray direction
+	vec3 dir = normalize(ray.dir);
+
+	// Delta P = Ray origin - Sphere centre
+	vec3 deltaP = ray.origin - sph.centre;
+	
+	// Calulate Discriminant (d dot deltaP)^2 - |deltaP|^2 + r^2
+	float dis = pow(dot(dir, deltaP), 2) - pow(length(deltaP), 2) + pow(sph.radius, 2);
+	
+	// If quadratic equation has solution ...
+	if(dis >= 0) {
+
+		// Calculate closer hit point
+		float mu = -dot(dir, deltaP) - sqrt(dis);
+		vec3 point = ray.origin + dir * mu;
+			
+		// Calculate distance to hit point
+		float d = distance(ray.origin, point);
+
+		// Calculate normal
+		vec3 normal = normalize(point - sph.centre);
+		
+		// Update intersect if hit point is closer to viewpoint ...
+		if(mu > 0 && d < intersect.t) {
+			intersect.t = d;
+			intersect.point = point;
+			intersect.normal = normal;
+			intersect.hit = 1;
+			intersect.colour = phong_illumination(point, normal, sph.colour);
+		}		
+	}
+}
+
+void plane_intersect(Plane pl, Ray ray, inout Intersection intersect)
+{
+	// Ray direction
+	vec3 dir = normalize(ray.dir);
+
+	// Calculate denominator
+	float den = dot(dir, pl.normal);
+
+	if(den != 0) {
+
+		// Caculate hit point
+		float mu = -dot((ray.origin - pl.point), pl.normal) / den;
+		vec3 point = ray.origin + dir * mu;
+		
+		// Calculate distance to hit point
+		float d = distance(ray.origin, point);
+		
+		int row = int(floor(point.z / checker_size)) % 2;
+		int col = int(floor(point.x / checker_size)) % 2;
+		vec3 colour = (row + col) == 1 ? vec3(0,0,0) : vec3(0.3,0.3,0.3);
+
+		// Calculate normal
+		vec3 normal = normalize(pl.normal);
+		
+		// Update intersect if hit point is closer to viewpoint ...
+		if(mu > 0 && d < intersect.t) {
+			intersect.t = d;
+			intersect.point = point;
+			intersect.normal = normal;
+			intersect.hit = 1;
+			intersect.colour = phong_illumination(point, normal, colour);;
+		}	
+		
+	}
+}
+
+Sphere sphere[numSpheres];
+Plane plane;
+void Intersect(Ray r, inout Intersection i)
+{
+	// Compute intersection for every object in the scene
+	for(int k = 0; k < numSpheres; k++) {
+		shpere_intersect(sphere[k], r, i);
+	}
+
+	plane_intersect(plane, r, i);
+}
+
+int seed = 0;
+float rnd()
+{
+	seed = int(mod(float(seed)*1364.0+626.0, 509.0));
+	return float(seed)/509.0;
+}
+
+vec3 computeShadow(in Intersection intersect)
+{
+	// Compute shadow ray (Add epsilon to prevent self shadowing)
+	vec3 dir = normalize(light_point - intersect.point);	
+	Ray shadow_ray = Ray(intersect.point + EPSILON * intersect.normal, dir);
+
+	// Compute intersection of shadow ray
+	Intersection shadow_intersect = Intersection(MAX_INT, vec3(0), vec3(0), 0, vec3(0));
+	Intersect(shadow_ray, shadow_intersect);
+
+	return shadow_intersect.hit == 1 ? vec3(0, 0, 0) : intersect.colour;
+}
+
+
+void main()
+{
+	//please leave the scene config unaltered for marking 
+	sphere[0].centre   = vec3(-2.0, 1.5, -3.5);
+	sphere[0].radius   = 1.5;
+	sphere[0].colour = vec3(0.8,0.8,0.8);
+	sphere[1].centre   = vec3(-0.5, 0.0, -2.0);
+	sphere[1].radius   = 0.6;
+	sphere[1].colour = vec3(0.3,0.8,0.3);
+	sphere[2].centre   = vec3(1.0, 0.7, -2.2);
+	sphere[2].radius   = 0.8;
+	sphere[2].colour = vec3(0.3,0.8,0.8);
+	sphere[3].centre   = vec3(0.7, -0.3, -1.2);
+	sphere[3].radius   = 0.2;
+	sphere[3].colour = vec3(0.8,0.8,0.3);
+	sphere[4].centre   = vec3(-0.7, -0.3, -1.2);
+	sphere[4].radius   = 0.2;
+	sphere[4].colour = vec3(0.8,0.3,0.3);
+	sphere[5].centre   = vec3(0.2, -0.2, -1.2);
+	sphere[5].radius   = 0.3;
+	sphere[5].colour = vec3(0.8,0.3,0.8);
+	plane.point = vec3(0,-0.5, 0);
+	plane.normal = vec3(0, 1.0, 0);
+	plane.colour = vec3(1, 1, 1);
+	seed = int(mod(dir.x * dir.y * 39786038.0, 65536.0));
+	//scene definition end
+
+	// Define colour as ambient term
+	vec4 colour = vec4(0,0,0,1);
+	float k = 0.5;
+	
+	// Primary ray
+	vec3 direction = (vec4(dir, 1.0) * mvMatrixScene).xyz;
+	Ray ray = Ray(vec3(0,0,0), direction);
+
+	int depth = 0;
+	while(depth < raytraceDepth) {
+
+		// Find intersection of ray
+		Intersection intersect = Intersection(MAX_INT, vec3(0), vec3(0), 0, vec3(0));
+		Intersect(ray, intersect);
+	
+		// If ray does not intersect with any object, break
+		if(intersect.hit == 0) break;
+
+		
+		colour += k * vec4(computeShadow(intersect), 1.0);
+		
+		// Compute reflected ray (Add epsilon to prevent self reflection)
+		ray.origin = intersect.point +  EPSILON * intersect.normal;
+		ray.dir = reflect(normalize(ray.dir), intersect.normal);
+
+		k *= 0.5;
+		depth++;
+	}
+	
+	
+	outcolour = colour;
+	
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+]]></R2TFrag>
+</pipeline>
